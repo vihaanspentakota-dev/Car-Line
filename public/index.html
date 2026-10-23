@@ -10,22 +10,36 @@ const token = new URLSearchParams(location.search).get('t') || localStorage.toke
 if (token) localStorage.token = token;
 const app = $('#app');
 
-const show = (...nodes) => app.replaceChildren(h('h1', {}, 'Car Line'), ...nodes);
-const kidLine = k => h('p', {}, k.name, ' ', h('small', {}, `(${k.zone})`),
-  k.out === undefined ? '' : k.out ? ' ✓ on the way' : ' · waiting');
+const show = (...nodes) => app.replaceChildren(h('h1', {}, 'Car Line'), ...nodes, h('p', { class: 'live' }, 'Updates automatically'));
+const kidRow = k => h('div', { class: 'row' },
+  h('div', { class: 'avatar' }, (k.name.trim()[0] || '?').toUpperCase()),
+  h('div', { class: 'grow' }, h('b', {}, k.name), ' ', h('span', { class: 'chip zone' }, k.zone)),
+  k.out === undefined ? null : h('span', { class: 'chip' + (k.out ? ' ok' : '') }, k.out ? '✓ On the way' : 'Waiting'));
+const step = (n, label, state) => h('div', { class: 'step ' + state }, h('i', {}, state === 'done' ? '✓' : n), label);
 
 function draw(m) {
   if (m.status === 'queued') {
-    return show(h('div', { class: 'card' },
-      h('p', { class: 'mut' }, 'Your place in line'),
-      h('div', { class: 'big' }, '#' + m.position),
-      h('p', { class: 'mut', style: 'text-align:center' }, `About ${m.etaMin} min`),
-      ...m.kids.map(kidLine)));
+    const some = m.kids.some(k => k.out);
+    return show(
+      h('div', { class: 'card hero' },
+        h('div', { class: 'ring', style: `--p:${Math.max(15, 100 - (m.position - 1) * 15)}` }, h('b', {}, m.position)),
+        h('p', { class: 'mut', style: 'margin:0 0 10px' }, 'your place in line'),
+        h('span', { class: 'chip zone' }, `About ${m.etaMin} min`)),
+      h('div', { class: 'card' },
+        h('div', { class: 'steps' }, step(1, 'In line', some ? 'done' : 'on'), step(2, 'Walking out', some ? 'on' : ''), step(3, 'Done', '')),
+        ...m.kids.map(kidRow)));
   }
-  if (m.status === 'done') return show(h('div', { class: 'card' }, h('p', {}, 'All set. Have a great evening!')));
+  if (m.status === 'done') {
+    return show(h('div', { class: 'card hero' },
+      h('div', { class: 'ring', style: '--p:100' }, h('b', { style: 'color:var(--ok)' }, '✓')),
+      h('h2', { style: 'margin:.2em 0' }, 'All set'),
+      h('p', { class: 'mut' }, 'Drive safe. See you tomorrow!')));
+  }
   show(h('div', { class: 'card' },
-    ...m.kids.map(kidLine),
-    h('button', { style: 'width:100%;margin-top:8px', onclick: async e => {
+    h('h2', { style: 'margin-top:0' }, 'Ready for pickup?'),
+    h('p', { class: 'mut', style: 'margin-top:0' }, 'Tap when you’re in the car line.'),
+    ...m.kids.map(kidRow),
+    h('button', { class: 'cta', onclick: async e => {
       e.target.disabled = true;
       try { await api('/api/arrive', { t: token }); } catch {}
       tick();
@@ -33,11 +47,11 @@ function draw(m) {
 }
 
 async function tick() {
-  if (!token) return show(h('p', {}, 'Open the link or scan the QR code from your car tag.'));
+  if (!token) return show(h('div', { class: 'card' }, h('p', {}, 'Open the link or scan the QR code from your car tag.')));
   try { draw(await api('/api/me?t=' + encodeURIComponent(token))); }
   catch (e) {
-    if (e.status) show(h('p', {}, e.message));
-    else if (!app.children.length) show(h('p', { class: 'mut' }, 'You’re offline. Retrying…'));
+    if (e.status) show(h('div', { class: 'card' }, h('p', {}, e.message)));
+    else if (!app.children.length) show(h('div', { class: 'card' }, h('p', { class: 'mut' }, 'You’re offline. Retrying…')));
   }
 }
 tick();
