@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Car Line</title><link rel="stylesheet" href="/style.css">
+</head><body><main id="app"></main>
+<script src="/common.js"></script>
+<script>
+// Parent page: no account, no install. The QR code on the car tag opens /?t=TOKEN.
+const token = new URLSearchParams(location.search).get('t') || localStorage.token;
+if (token) localStorage.token = token;
+const app = $('#app');
+
+const show = (...nodes) => app.replaceChildren(h('h1', {}, 'Car Line'), ...nodes);
+const kidLine = k => h('p', {}, k.name, ' ', h('small', {}, `(${k.zone})`),
+  k.out === undefined ? '' : k.out ? ' ✓ on the way' : ' · waiting');
+
+function draw(m) {
+  if (m.status === 'queued') {
+    return show(h('div', { class: 'card' },
+      h('p', { class: 'mut' }, 'Your place in line'),
+      h('div', { class: 'big' }, '#' + m.position),
+      h('p', { class: 'mut', style: 'text-align:center' }, `About ${m.etaMin} min`),
+      ...m.kids.map(kidLine)));
+  }
+  if (m.status === 'done') return show(h('div', { class: 'card' }, h('p', {}, 'All set. Have a great evening!')));
+  show(h('div', { class: 'card' },
+    ...m.kids.map(kidLine),
+    h('button', { style: 'width:100%;margin-top:8px', onclick: async e => {
+      e.target.disabled = true;
+      try { await api('/api/arrive', { t: token }); } catch {}
+      tick();
+    } }, 'I’m here')));
+}
+
+async function tick() {
+  if (!token) return show(h('p', {}, 'Open the link or scan the QR code from your car tag.'));
+  try { draw(await api('/api/me?t=' + encodeURIComponent(token))); }
+  catch (e) {
+    if (e.status) show(h('p', {}, e.message));
+    else if (!app.children.length) show(h('p', { class: 'mut' }, 'You’re offline. Retrying…'));
+  }
+}
+tick();
+setInterval(tick, 4000);
+document.addEventListener('visibilitychange', () => !document.hidden && tick());
+</script></body></html>

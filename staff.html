@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Car Line · Staff</title><link rel="stylesheet" href="/style.css">
+</head><body><main id="app"></main>
+<script src="/common.js"></script>
+<script>
+// Staff page: live queue over Server-Sent Events. If the signal drops, the last
+// queue stays on screen and taps go into an outbox that replays on reconnect.
+let pin = sessionStorage.pin || '', online = false, es;
+let state = JSON.parse(localStorage.lastState || 'null');
+let zone = localStorage.zone || '*';
+let outbox = JSON.parse(localStorage.outbox || '[]');
+const saveBox = () => localStorage.outbox = JSON.stringify(outbox);
+
+function connect() {
+  es = new EventSource('/api/events?pin=' + encodeURIComponent(pin));
+  es.onmessage = e => { state = JSON.parse(e.data); localStorage.lastState = e.data; online = true; flush(); render(); };
+  es.onerror = () => { online = false; render(); };
+}
+
+function applyLocal(job) { // optimistic update while offline
+  if (!state) return;
+  const { tag, kid, out } = job.body;
+  if (job.path === '/api/remove') state.queue = state.queue.filter(c => c.tag !== tag);
+  if (job.path === '/api/out') {
+    const car = state.queue.find(c => c.tag === tag), k = car && car.kids.find(x => x.name === kid);
+    if (k) k.out = out;
+    if (car && car.kids.every(x => x.out)) state.queue = state.queue.filter(c => c !== car);
+  }
+}
+
+async function act(path, body) {
+  const job = { path, body: { ...body, pin, at: Date.now() } };
+  try { await api(job.path, job.body); }
+  catch (e) {
+    if (e.status) return alert(e.message);
+    outbox.push(job); saveBox(); applyLocal(job); render();
+  }
+}
+
+async function flush() { // jobs are idempotent, so replaying them is safe
+  while (outbox.length) {
+    try { await api(outbox[0].path, outbox[0].body); outbox.shift(); saveBox(); }
+    catch (e) { if (e.status) { outbox.shift(); saveBox(); } else break; }
+  }
+  render();
+}
+window.addEventListener('online', flush);
+setInterval(() => { flush(); }, 5000);
+setInterval(() => state && render(), 15000); // keeps the "waiting" minutes fresh
+
+function addForm() {
+  const input = h('input', { placeholder: 'Add car by tag #', inputmode: 'numeric' });
+  return h('form', { onsubmit: e => { e.preventDefault(); if (input.value.trim()) act('/api/arrive', { tag: input.value.trim() }); input.value = ''; } },
+    input, h('button', {}, 'Add'));
+}
+
+function carCard(c, n) {
+  const here = k => zone === '*' || k.zone === zone;
+  const mins = Math.floor((state.now - c.at) / 60000 + (Date.now() - state.now) / 60000);
+  return h('li', { class: 'car' },
+    h('div', { class: 'n' }, n),
+    h('div', { class: 'body' },
+      h('b', {}, 'Tag ' + c.tag), h('small', {}, ` · ${mins} min${c.via === 'parent' ? ' · tapped in app' : ''}`),
+      h('div', {}, ...c.kids.filter(here).map(k =>
+        h('button', { class: 'kid' + (k.out ? ' done' : ''), onclick: () => act('/api/out', { tag: c.tag, kid: k.name, out: !k.out }) },
+          k.out ? `✓ ${k.name}` : `${k.name} → out`))),
+      c.kids.some(k => !here(k)) && h('small', {}, 'Also: ' + c.kids.filter(k => !here(k)).map(k => `${k.name} (${k.zone}${k.out ? ', out' : ''})`).join(', '))),
+    h('button', { class: 'x', title: 'Remove from queue', onclick: () => confirm(`Remove tag ${c.tag}?`) && act('/api/remove', { tag: c.tag }) }, '✕'));
+}
+
+function render() {
+  const app = $('#app');
+  if (!pin) return;
+  const cars = (state?.queue || []).filter(c => zone === '*' || c.kids.some(k => k.zone === zone && !k.out));
+  app.replaceChildren(
+    h('header', {}, h('h1', {}, 'Car Line'),
+      h('span', { class: 'pill ' + (online && !outbox.length ? 'ok' : 'warn') },
+        online ? (outbox.length ? `Syncing ${outbox.length}` : 'Live') : `Offline${outbox.length ? ' · ' + outbox.length + ' pending' : ''}`)),
+    h('nav', {}, ['*', ...(state?.zones || [])].map(z =>
+      h('button', { class: 'tab' + (z === zone ? ' on' : ''), onclick: () => { zone = z; localStorage.zone = z; render(); } }, z === '*' ? 'All' : z))),
+    addForm(),
+    state && h('small', { class: 'mut' }, `${cars.length} waiting · about ${Math.round(state.avgMs / 1000)}s per car`),
+    h('ul', {}, ...cars.map((c, i) => carCard(c, i + 1))));
+}
+
+function start() { render(); connect(); }
+if (pin) start();
+else askPin('Staff', async p => { await api('/api/auth', { pin: p }); pin = sessionStorage.pin = p; start(); });
+</script></body></html>

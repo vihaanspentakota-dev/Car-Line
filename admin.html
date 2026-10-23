@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Car Line · Office</title><link rel="stylesheet" href="/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head><body><main id="app"></main>
+<script src="/common.js"></script>
+<script>
+// Office page: paste the roster, print each family's QR code for their car tag.
+let pin = sessionStorage.pin || '';
+
+function draw(r) {
+  const csv = Object.entries(r.families).flatMap(([tag, f]) => f.kids.map(k => `${tag},${k.name},${k.zone}`)).join('\n');
+  const box = h('textarea', {}, csv);
+  const cards = Object.entries(r.families).map(([tag, f]) => {
+    const url = `${location.origin}/?t=${f.token}`, qr = h('div');
+    new QRCode(qr, { text: url, width: 96, height: 96 });
+    return h('div', { class: 'car' }, qr, h('div', { class: 'body' },
+      h('b', {}, 'Tag ' + tag), h('div', {}, f.kids.map(k => `${k.name} (${k.zone})`).join(', ')), h('small', { class: 'mut' }, url)));
+  });
+  $('#app').replaceChildren(
+    h('h1', {}, 'Car Line · Office'),
+    h('p', { class: 'mut' }, 'One line per child: tag number, first name, zone. Saving clears today’s queue.'),
+    box,
+    h('div', {},
+      h('button', { onclick: async () => { await api('/api/roster', { pin, csv: box.value }); load(); } }, 'Save roster'), ' ',
+      h('button', { class: 'tab', onclick: async () => { if (confirm('Clear today’s queue?')) { await api('/api/endday', { pin }); alert('Cleared'); } } }, 'End day')),
+    h('h2', {}, 'Car tag links'), ...cards);
+}
+
+async function load() {
+  try { draw(await api('/api/roster?pin=' + encodeURIComponent(pin))); }
+  catch { sessionStorage.removeItem('pin'); pin = ''; gate(); }
+}
+const gate = () => askPin('Office', async p => { await api('/api/auth', { pin: p, admin: true }); pin = sessionStorage.pin = p; load(); });
+pin ? load() : gate();
+</script></body></html>
